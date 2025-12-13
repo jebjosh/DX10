@@ -1,0 +1,2 @@
+Go to 
+/Library/Audio/Plugins folder on your Mac and copy the Components folder and VST3 folder there
