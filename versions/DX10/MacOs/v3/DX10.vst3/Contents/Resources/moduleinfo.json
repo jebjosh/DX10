@@ -1,0 +1,48 @@
+{
+  "Name": "DX10",
+  "Version": "1.0.0",
+  "Factory Info": {
+    "Vendor": "jebjosh",
+    "URL": "www.jebjosh.com",
+    "E-Mail": "",
+    "Flags": {
+      "Unicode": true,
+      "Classes Discardable": false,
+      "Component Non Discardable": false,
+    },
+  },
+  "Classes": [
+    {
+      "CID": "ABCDEF019182FAEB4D616E754A454258",
+      "Category": "Audio Module Class",
+      "Name": "DX10",
+      "Vendor": "jebjosh",
+      "Version": "1.0.0",
+      "SDKVersion": "VST 3.8.0",
+      "Sub Categories": [
+        "Instrument",
+        "Synth",
+      ],
+      "Class Flags": 2,
+      "Cardinality": 2147483647,
+      "Snapshots": [
+      ],
+    },
+    {
+      "CID": "ABCDEF011234ABCD4D616E754A454258",
+      "Category": "Component Controller Class",
+      "Name": "DX10",
+      "Vendor": "jebjosh",
+      "Version": "1.0.0",
+      "SDKVersion": "VST 3.8.0",
+      "Sub Categories": [
+        "Instrument",
+        "Synth",
+      ],
+      "Class Flags": 2,
+      "Cardinality": 2147483647,
+      "Snapshots": [
+      ],
+    },
+  ],
+}
