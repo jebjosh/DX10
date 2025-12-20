@@ -21,7 +21,7 @@ DX10AudioProcessor::DX10AudioProcessor()
     _inverseSampleRate = 1.0f / _sampleRate;
 
     createPrograms();
-    setCurrentProgram(0);
+    _currentProgram = 0;
 }
 
 DX10AudioProcessor::~DX10AudioProcessor()
@@ -40,13 +40,28 @@ int DX10AudioProcessor::getNumPrograms()
 
 int DX10AudioProcessor::getCurrentProgram()
 {
+    // Return the value from the parameter
+    if (auto* param = apvts.getRawParameterValue("PresetIndex"))
+    {
+        return static_cast<int>(param->load() * (NPRESETS - 1) + 0.5f);
+    }
     return _currentProgram;
 }
 
 void DX10AudioProcessor::setCurrentProgram(int index)
 {
+    if (index < 0 || index >= static_cast<int>(_programs.size()))
+        return;
+
     _currentProgram = index;
 
+    // Update the PresetIndex parameter (this will be saved with state)
+    if (auto* param = apvts.getParameter("PresetIndex"))
+    {
+        param->setValueNotifyingHost(static_cast<float>(index) / static_cast<float>(NPRESETS - 1));
+    }
+
+    // Load the preset's sound parameters
     const char *paramNames[] = {
         "Attack",
         "Decay",
@@ -73,7 +88,16 @@ void DX10AudioProcessor::setCurrentProgram(int index)
 
 const juce::String DX10AudioProcessor::getProgramName(int index)
 {
-    return { _programs[index].name };
+    if (index >= 0 && index < static_cast<int>(_programs.size()))
+        return { _programs[index].name };
+    return {};
+}
+
+juce::String DX10AudioProcessor::getPresetName(int index) const
+{
+    if (index >= 0 && index < static_cast<int>(_programs.size()))
+        return { _programs[index].name };
+    return {};
 }
 
 void DX10AudioProcessor::changeProgramName(int index, const juce::String &newName)
@@ -683,9 +707,6 @@ void DX10AudioProcessor::noteOn(int note, int velocity)
 
 juce::AudioProcessorEditor *DX10AudioProcessor::createEditor()
 {
-    /*auto editor = new juce::GenericAudioProcessorEditor(*this);
-    editor->setSize(500, 1000);
-    return editor;*/
     return new DX10AudioProcessorEditor(*this);
 }
 
@@ -699,12 +720,27 @@ void DX10AudioProcessor::setStateInformation(const void *data, int sizeInBytes)
     std::unique_ptr<juce::XmlElement> xml(getXmlFromBinary(data, sizeInBytes));
     if (xml.get() != nullptr && xml->hasTagName(apvts.state.getType())) {
         apvts.replaceState(juce::ValueTree::fromXml(*xml));
+        
+        // Sync _currentProgram with the restored PresetIndex parameter
+        if (auto* param = apvts.getRawParameterValue("PresetIndex"))
+        {
+            _currentProgram = static_cast<int>(param->load() * (NPRESETS - 1) + 0.5f);
+        }
     }
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout DX10AudioProcessor::createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
+
+    // PresetIndex parameter - this gets saved/restored automatically with APVTS
+    // Note: We can't use stringFromValueFunction with 'this' here because
+    // _programs isn't populated yet when this is called.
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("PresetIndex", 1),
+        "Preset",
+        juce::NormalisableRange<float>(0.0f, 1.0f),
+        0.0f));
 
     // The original plug-in, being written for VST2, used parameters from 0 to 1.
     // It would be nicer to change the parameters to more natural ranges, which

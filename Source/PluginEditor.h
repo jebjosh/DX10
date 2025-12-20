@@ -5,7 +5,8 @@
 #include "CustomLookAndFeel.h"
 #include "RotaryKnobWithLabel.h"
 
-class DX10AudioProcessorEditor : public juce::AudioProcessorEditor
+class DX10AudioProcessorEditor : public juce::AudioProcessorEditor,
+                                  private juce::AudioProcessorValueTreeState::Listener
 {
 public:
     DX10AudioProcessorEditor(DX10AudioProcessor&);
@@ -15,6 +16,9 @@ public:
     void resized() override;
 
 private:
+    // Parameter listener callback
+    void parameterChanged(const juce::String& parameterID, float newValue) override;
+    
     // Reference to the processor
     DX10AudioProcessor& audioProcessor;
 
@@ -24,6 +28,9 @@ private:
     // Preset selector
     juce::ComboBox presetSelector;
     juce::Label presetLabel;
+    
+    // Flag to prevent feedback loop when updating preset selector
+    bool isUpdatingPresetSelector = false;
 
     // === Carrier Envelope Section ===
     RotaryKnobWithLabel attackKnob;
@@ -74,6 +81,7 @@ private:
     // Helper methods
     void setupKnob(RotaryKnobWithLabel& knob, const juce::String& labelText);
     void drawSection(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::String& title);
+    void updatePresetSelectorFromParameter();
     
     // Constraint for resizing
     juce::ComponentBoundsConstrainer constrainer;

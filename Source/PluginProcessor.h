@@ -4,6 +4,7 @@
 
 const int NPARAMS = 16;       // number of parameters
 const int NVOICES = 8;        // max polyphony
+const int NPRESETS = 32;      // number of factory presets
 
 const float SILENCE = 0.0003f;  // voice choking
 
@@ -82,6 +83,12 @@ public:
 
     juce::AudioProcessorValueTreeState apvts { *this, nullptr, "Parameters", createParameterLayout() };
 
+    // Get the number of available presets
+    int getNumPresets() const { return static_cast<int>(_programs.size()); }
+    
+    // Get preset name by index
+    juce::String getPresetName(int index) const;
+
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
@@ -91,11 +98,14 @@ private:
     void createPrograms();
     void processEvents(juce::MidiBuffer &midiMessages);
     void noteOn(int note, int velocity);
+    
+    // Called when preset parameter changes
+    void loadPresetParameters(int presetIndex);
 
     // The factory presets.
     std::vector<DX10Program> _programs;
 
-    // Index of the active preset.
+    // Index of the active preset (kept in sync with PresetIndex parameter)
     int _currentProgram;
 
     // The current sample rate and 1 / sample rate.
@@ -179,6 +189,9 @@ private:
 
     // Pitch bend value.
     float _pitchBend;
+    
+    // Listener for preset parameter changes
+    std::atomic<int> _pendingPresetLoad { -1 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DX10AudioProcessor)
 };

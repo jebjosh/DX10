@@ -6,45 +6,19 @@ DX10AudioProcessorEditor::DX10AudioProcessorEditor(DX10AudioProcessor& p)
     // Apply custom look and feel
     setLookAndFeel(&customLookAndFeel);
 
-    // Setup preset selector
-    presetLabel.setText("PRESET", juce::dontSendNotification);
-    presetLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
-    presetLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF888899));
-    presetLabel.setJustificationType(juce::Justification::centredLeft);
-    addAndMakeVisible(presetLabel);
-
-    for (int i = 0; i < audioProcessor.getNumPrograms(); ++i)
-    {
-        presetSelector.addItem(audioProcessor.getProgramName(i), i + 1);
-    }
-    presetSelector.setSelectedId(audioProcessor.getCurrentProgram() + 1, juce::dontSendNotification);
-    presetSelector.onChange = [this]()
-    {
-        audioProcessor.setCurrentProgram(presetSelector.getSelectedId() - 1);
-    };
-    addAndMakeVisible(presetSelector);
-
-    // === Setup Carrier Envelope Knobs ===
+    // === Setup all knobs first ===
     setupKnob(attackKnob, "ATTACK");
     setupKnob(decayKnob, "DECAY");
     setupKnob(releaseKnob, "RELEASE");
-
-    // === Setup Modulator Ratio Knobs ===
     setupKnob(coarseKnob, "COARSE");
     setupKnob(fineKnob, "FINE");
-
-    // === Setup Modulator Envelope Knobs ===
     setupKnob(modInitKnob, "INIT");
     setupKnob(modDecKnob, "DECAY");
     setupKnob(modSusKnob, "SUSTAIN");
     setupKnob(modRelKnob, "RELEASE");
     setupKnob(modVelKnob, "VEL SENS");
-
-    // === Setup Tuning Knobs ===
     setupKnob(octaveKnob, "OCTAVE");
     setupKnob(fineTuneKnob, "FINE TUNE");
-
-    // === Setup Output Knobs ===
     setupKnob(vibratoKnob, "VIBRATO");
     setupKnob(waveformKnob, "WAVEFORM");
     setupKnob(modThruKnob, "MOD THRU");
@@ -72,6 +46,39 @@ DX10AudioProcessorEditor::DX10AudioProcessorEditor(DX10AudioProcessor& p)
     modThruAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "Mod Thru", modThruKnob.getSlider());
     lfoRateAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "LFO Rate", lfoRateKnob.getSlider());
 
+    // === Setup preset selector ===
+    presetLabel.setText("PRESET", juce::dontSendNotification);
+    presetLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    presetLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF888899));
+    presetLabel.setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(presetLabel);
+
+    // Populate preset selector
+    for (int i = 0; i < audioProcessor.getNumPresets(); ++i)
+    {
+        presetSelector.addItem(audioProcessor.getPresetName(i), i + 1);
+    }
+    
+    // Set initial selection from the parameter
+    updatePresetSelectorFromParameter();
+    
+    // Handle user selection changes
+    presetSelector.onChange = [this]()
+    {
+        if (isUpdatingPresetSelector)
+            return;
+            
+        int selectedIndex = presetSelector.getSelectedId() - 1;
+        if (selectedIndex >= 0)
+        {
+            audioProcessor.setCurrentProgram(selectedIndex);
+        }
+    };
+    addAndMakeVisible(presetSelector);
+
+    // Listen for preset parameter changes (for when state is restored)
+    audioProcessor.apvts.addParameterListener("PresetIndex", this);
+
     // Set size constraints for resizing
     constrainer.setMinimumSize(600, 450);
     constrainer.setMaximumSize(1200, 900);
@@ -85,7 +92,33 @@ DX10AudioProcessorEditor::DX10AudioProcessorEditor(DX10AudioProcessor& p)
 
 DX10AudioProcessorEditor::~DX10AudioProcessorEditor()
 {
+    audioProcessor.apvts.removeParameterListener("PresetIndex", this);
     setLookAndFeel(nullptr);
+}
+
+void DX10AudioProcessorEditor::parameterChanged(const juce::String& parameterID, float newValue)
+{
+    if (parameterID == "PresetIndex")
+    {
+        // Update the combo box on the message thread
+        juce::MessageManager::callAsync([this]()
+        {
+            updatePresetSelectorFromParameter();
+        });
+    }
+}
+
+void DX10AudioProcessorEditor::updatePresetSelectorFromParameter()
+{
+    isUpdatingPresetSelector = true;
+    
+    if (auto* param = audioProcessor.apvts.getRawParameterValue("PresetIndex"))
+    {
+        int index = static_cast<int>(param->load() * (NPRESETS - 1) + 0.5f);
+        presetSelector.setSelectedId(index + 1, juce::dontSendNotification);
+    }
+    
+    isUpdatingPresetSelector = false;
 }
 
 void DX10AudioProcessorEditor::setupKnob(RotaryKnobWithLabel& knob, const juce::String& labelText)
