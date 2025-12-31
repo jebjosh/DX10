@@ -48,6 +48,9 @@ struct Voice
     float mdec;  // decay multiplier
 };
 
+// Forward declaration
+class SpectrumAnalyzer;
+
 class DX10AudioProcessor : public juce::AudioProcessor
 {
 public:
@@ -81,13 +84,20 @@ public:
     void getStateInformation(juce::MemoryBlock &destData) override;
     void setStateInformation(const void *data, int sizeInBytes) override;
 
-    juce::AudioProcessorValueTreeState apvts { *this, nullptr, "Parameters", createParameterLayout() };
+    // UndoManager for undo/redo support
+    juce::UndoManager undoManager;
+    
+    // APVTS with UndoManager
+    juce::AudioProcessorValueTreeState apvts { *this, &undoManager, "Parameters", createParameterLayout() };
 
     // Get the number of available presets
     int getNumPresets() const { return static_cast<int>(_programs.size()); }
     
     // Get preset name by index
     juce::String getPresetName(int index) const;
+    
+    // Spectrum analyzer data access
+    void setSpectrumAnalyzer(SpectrumAnalyzer* analyzer) { spectrumAnalyzer = analyzer; }
 
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -98,9 +108,6 @@ private:
     void createPrograms();
     void processEvents(juce::MidiBuffer &midiMessages);
     void noteOn(int note, int velocity);
-    
-    // Called when preset parameter changes
-    void loadPresetParameters(int presetIndex);
 
     // The factory presets.
     std::vector<DX10Program> _programs;
@@ -190,8 +197,8 @@ private:
     // Pitch bend value.
     float _pitchBend;
     
-    // Listener for preset parameter changes
-    std::atomic<int> _pendingPresetLoad { -1 };
+    // Pointer to spectrum analyzer (set by editor)
+    SpectrumAnalyzer* spectrumAnalyzer = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DX10AudioProcessor)
 };
