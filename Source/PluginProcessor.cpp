@@ -21,7 +21,15 @@ DX10AudioProcessor::DX10AudioProcessor()
     _sampleRate = 44100.0f;
     _inverseSampleRate = 1.0f / _sampleRate;
     createPrograms();
-    _currentProgram = 0;
+    _currentProgram = 15;  // Log Drum preset
+    _currentPresetName = _programs[15].name;  // Set initial preset name
+    
+    // Initialize parameters to Log Drum preset values
+    const char *paramNames[] = {"Attack","Decay","Release","Coarse","Fine","Mod Init","Mod Dec","Mod Sus","Mod Rel","Mod Vel","Vibrato","Octave","FineTune","Waveform","Mod Thru","LFO Rate"};
+    for (int i = 0; i < NPARAMS; ++i) {
+        if (auto* param = apvts.getParameter(paramNames[i]))
+            param->setValueNotifyingHost(_programs[15].param[i]);
+    }
 }
 
 DX10AudioProcessor::~DX10AudioProcessor() {}
@@ -38,19 +46,42 @@ int DX10AudioProcessor::getCurrentProgram()
 
 void DX10AudioProcessor::setCurrentProgram(int index)
 {
+    // Don't overwrite parameters if we're restoring saved state
+    if (_isRestoringState) return;
+    
     if (index < 0 || index >= static_cast<int>(_programs.size())) return;
+    
+    // Begin undo transaction for preset change
+    undoManager.beginNewTransaction("Load Preset: " + juce::String(_programs[index].name));
+    
     _currentProgram = index;
+    _currentPresetName = _programs[index].name;  // Set the preset name
+    
+    // Update PresetIndex parameter
     if (auto* param = apvts.getParameter("PresetIndex"))
         param->setValueNotifyingHost(static_cast<float>(index) / static_cast<float>(NPRESETS - 1));
+    
+    // Update SelectedPresetId parameter (index + 1 because factory presets are 1-based)
+    if (auto* param = apvts.getParameter("SelectedPresetId"))
+        param->setValueNotifyingHost(param->convertTo0to1(static_cast<float>(index + 1)));
 
+    // Only set the 16 original FM synth parameters, preserve Gain and Saturation
     const char *paramNames[] = {"Attack","Decay","Release","Coarse","Fine","Mod Init","Mod Dec","Mod Sus","Mod Rel","Mod Vel","Vibrato","Octave","FineTune","Waveform","Mod Thru","LFO Rate"};
     for (int i = 0; i < NPARAMS; ++i)
         apvts.getParameter(paramNames[i])->setValueNotifyingHost(_programs[index].param[i]);
+    
+    // Notify host of program change
+    updateHostDisplay(ChangeDetails().withProgramChanged(true));
 }
 
 const juce::String DX10AudioProcessor::getProgramName(int index)
 {
-    if (index >= 0 && index < static_cast<int>(_programs.size())) return { _programs[index].name };
+    // If asking for current program, return the current preset name
+    if (index == _currentProgram && _currentPresetName.isNotEmpty())
+        return _currentPresetName;
+    
+    if (index >= 0 && index < static_cast<int>(_programs.size())) 
+        return { _programs[index].name };
     return {};
 }
 
@@ -143,6 +174,11 @@ void DX10AudioProcessor::update()
     _modMix = 0.25f * param14 * param14;
     float param15 = apvts.getRawParameterValue("LFO Rate")->load();
     _lfoInc = 628.3f * _inverseSampleRate * 25.0f * param15 * param15;
+    
+    // Output section
+    float gainParam = apvts.getRawParameterValue("Gain")->load();
+    _outputGain = std::pow(10.0f, (gainParam * 24.0f - 12.0f) / 20.0f);  // -12dB to +12dB
+    _saturation = apvts.getRawParameterValue("Saturation")->load();
 }
 
 void DX10AudioProcessor::processEvents(juce::MidiBuffer &midiMessages)
@@ -214,6 +250,16 @@ void DX10AudioProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::Mi
                     }
                     V++;
                 }
+                
+                // Apply saturation (soft clipping)
+                if (_saturation > 0.0f) {
+                    float satAmount = _saturation * 4.0f;
+                    o = std::tanh(o * (1.0f + satAmount)) / (1.0f + satAmount * 0.5f);
+                }
+                
+                // Apply output gain
+                o *= _outputGain;
+                
                 *out1++ = o; *out2++ = o;
             }
             if (frame < sampleFrames) { int note = _notes[event++]; int vel = _notes[event++]; noteOn(note, vel); }
@@ -274,9 +320,11 @@ void DX10AudioProcessor::setStateInformation(const void *data, int sizeInBytes)
 {
     std::unique_ptr<juce::XmlElement> xml(getXmlFromBinary(data, sizeInBytes));
     if (xml.get() != nullptr && xml->hasTagName(apvts.state.getType())) {
+        _isRestoringState = true;
         apvts.replaceState(juce::ValueTree::fromXml(*xml));
         if (auto* param = apvts.getRawParameterValue("PresetIndex"))
             _currentProgram = static_cast<int>(param->load() * (NPRESETS - 1) + 0.5f);
+        _isRestoringState = false;
     }
 }
 
@@ -298,8 +346,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout DX10AudioProcessor::createPa
     layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("Octave", 1), "Octave", juce::NormalisableRange<float>(), 0.5f, juce::AudioParameterFloatAttributes().withStringFromValueFunction([](float v, int) { return juce::String(int(v * 6.9f) - 3); })));
     layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("FineTune", 1), "FineTune", juce::NormalisableRange<float>(), 0.5f, juce::AudioParameterFloatAttributes().withLabel("cents").withStringFromValueFunction([](float v, int) { return juce::String(int(200.0f * v - 100.0f)); })));
     layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("Waveform", 1), "Waveform", juce::NormalisableRange<float>(), 0.447f, juce::AudioParameterFloatAttributes().withLabel("%").withStringFromValueFunction([](float v, int) { return juce::String(int(v * 100.0f)); })));
-    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("Mod Thru", 1), "Mod Thru", juce::NormalisableRange<float>(), 0.0f, juce::AudioParameterFloatAttributes().withLabel("%").withStringFromValueFunction([](float v, int) { return juce::String(int(v * 100.0f)); })));
-    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("LFO Rate", 1), "LFO Rate", juce::NormalisableRange<float>(), 0.414f, juce::AudioParameterFloatAttributes().withLabel("Hz").withStringFromValueFunction([](float v, int) { return juce::String(25.0f * v * v, 2); })));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("Mod Thru", 1), "Mod Thru", juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f, juce::AudioParameterFloatAttributes().withLabel("%").withStringFromValueFunction([](float v, int) { return juce::String(int(v * 100.0f)); })));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("LFO Rate", 1), "LFO Rate", juce::NormalisableRange<float>(0.0f, 1.0f), 0.414f, juce::AudioParameterFloatAttributes().withLabel("Hz").withStringFromValueFunction([](float v, int) { return juce::String(25.0f * v * v, 2); })));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("Gain", 1), "Gain", juce::NormalisableRange<float>(0.0f, 1.0f), 0.5f, juce::AudioParameterFloatAttributes().withLabel("dB").withStringFromValueFunction([](float v, int) { return juce::String(v * 24.0f - 12.0f, 1); })));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("Saturation", 1), "Saturation", juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f, juce::AudioParameterFloatAttributes().withLabel("%").withStringFromValueFunction([](float v, int) { return juce::String(int(v * 100.0f)); })));
+    // Hidden parameter to track selected preset ID for undo (1-32 = factory, 1001+ = user)
+    // Default to 16 = Log Drum preset
+    layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID("SelectedPresetId", 1), "SelectedPresetId", 1, 999999, 16));
     return layout;
 }
 

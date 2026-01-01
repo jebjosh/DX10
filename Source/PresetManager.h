@@ -96,6 +96,19 @@ public:
     bool savePresetToFile(const juce::File& file)
     {
         auto state = valueTreeState.copyState();
+        
+        // Remove PresetIndex and SelectedPresetId from saved state - these are internal tracking params
+        for (int i = state.getNumChildren() - 1; i >= 0; --i)
+        {
+            auto child = state.getChild(i);
+            if (child.hasType("PARAM"))
+            {
+                auto paramId = child.getProperty("id").toString();
+                if (paramId == "PresetIndex" || paramId == "SelectedPresetId")
+                    state.removeChild(i, nullptr);
+            }
+        }
+        
         std::unique_ptr<juce::XmlElement> xml(state.createXml());
         if (xml == nullptr)
             return false;
@@ -121,8 +134,28 @@ public:
         if (!xml->hasTagName(valueTreeState.state.getType()))
             return false;
         
+        // Begin undo transaction for preset load
+        if (auto* undoManager = valueTreeState.undoManager)
+            undoManager->beginNewTransaction("Load Preset: " + file.getFileNameWithoutExtension());
+        
         auto newState = juce::ValueTree::fromXml(*xml);
-        valueTreeState.replaceState(newState);
+        
+        // Set each parameter individually so undo works
+        // Skip PresetIndex and SelectedPresetId - these will be set by the caller
+        for (int i = 0; i < newState.getNumChildren(); ++i)
+        {
+            auto child = newState.getChild(i);
+            if (child.hasType("PARAM"))
+            {
+                auto paramId = child.getProperty("id").toString();
+                // Skip internal tracking parameters
+                if (paramId == "PresetIndex" || paramId == "SelectedPresetId")
+                    continue;
+                auto value = static_cast<float>(child.getProperty("value"));
+                if (auto* param = valueTreeState.getParameter(paramId))
+                    param->setValueNotifyingHost(value);
+            }
+        }
         
         setLastLoadedPreset(file.getFullPathName());
         

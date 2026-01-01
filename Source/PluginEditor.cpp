@@ -20,6 +20,7 @@ DX10AudioProcessorEditor::DX10AudioProcessorEditor(DX10AudioProcessor& p)
     setupKnob(octaveKnob, "OCTAVE"); setupKnob(fineTuneKnob, "FINE TUNE");
     setupKnob(vibratoKnob, "VIBRATO"); setupKnob(waveformKnob, "WAVEFORM");
     setupKnob(modThruKnob, "MOD THRU"); setupKnob(lfoRateKnob, "LFO RATE");
+    setupKnob(gainKnob, "GAIN"); setupKnob(saturationKnob, "SATURATE");
 
     // Create attachments
     attackAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "Attack", attackKnob.getSlider());
@@ -38,6 +39,28 @@ DX10AudioProcessorEditor::DX10AudioProcessorEditor(DX10AudioProcessor& p)
     waveformAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "Waveform", waveformKnob.getSlider());
     modThruAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "Mod Thru", modThruKnob.getSlider());
     lfoRateAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "LFO Rate", lfoRateKnob.getSlider());
+    gainAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "Gain", gainKnob.getSlider());
+    saturationAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "Saturation", saturationKnob.getSlider());
+
+    // Set associated parameters for host context menu (DAW automation)
+    attackKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Attack"));
+    decayKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Decay"));
+    releaseKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Release"));
+    coarseKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Coarse"));
+    fineKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Fine"));
+    modInitKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Mod Init"));
+    modDecKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Mod Dec"));
+    modSusKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Mod Sus"));
+    modRelKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Mod Rel"));
+    modVelKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Mod Vel"));
+    octaveKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Octave"));
+    fineTuneKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("FineTune"));
+    vibratoKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Vibrato"));
+    waveformKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Waveform"));
+    modThruKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Mod Thru"));
+    lfoRateKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("LFO Rate"));
+    gainKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Gain"));
+    saturationKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Saturation"));
 
     // Build preset list
     rebuildPresetList();
@@ -47,15 +70,25 @@ DX10AudioProcessorEditor::DX10AudioProcessorEditor(DX10AudioProcessor& p)
         if (isUpdatingPresetSelector) return;
         int selectedId = presetSelector.getSelectedId();
         
+        // Store the selected preset ID in the parameter (for undo tracking)
+        if (auto* param = audioProcessor.apvts.getParameter("SelectedPresetId"))
+            param->setValueNotifyingHost(param->convertTo0to1(static_cast<float>(selectedId)));
+        
         if (selectedId > 0 && selectedId <= numFactoryPresets) {
             // Factory preset
+            lastLoadedUserPreset = juce::File();  // Clear user preset tracking
             audioProcessor.setCurrentProgram(selectedId - 1);
         }
         else if (selectedId > 1000) {
             // User preset - look up file from map
             auto it = presetIdToFile.find(selectedId);
             if (it != presetIdToFile.end() && it->second.existsAsFile()) {
+                lastLoadedUserPreset = it->second;  // Track which preset was loaded
+                // Set the preset name for host display
+                audioProcessor.setCurrentPresetName(it->second.getFileNameWithoutExtension());
                 presetManager->loadPresetFromFile(it->second);
+                // Notify host of program change
+                audioProcessor.updateHostDisplay(juce::AudioProcessor::ChangeDetails().withProgramChanged(true));
             }
         }
     };
@@ -79,6 +112,9 @@ DX10AudioProcessorEditor::DX10AudioProcessorEditor(DX10AudioProcessor& p)
     settingsButton.onClick = [this]() { showSettingsMenu(); };
     addAndMakeVisible(settingsButton);
 
+    // Spectrum analyzer always visible
+    addAndMakeVisible(spectrumAnalyzer);
+
     // Save button
     savePresetButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2A2A35));
     savePresetButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFF00D4AA));
@@ -94,31 +130,62 @@ DX10AudioProcessorEditor::DX10AudioProcessorEditor(DX10AudioProcessor& p)
     // Undo/Redo buttons
     undoButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2A2A35));
     undoButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFCCCCCC));
-    undoButton.onClick = [this]() { audioProcessor.undoManager.undo(); };
+    undoButton.onClick = [this]() { 
+        audioProcessor.undoManager.undo();
+        // Restore preset selector from the SelectedPresetId parameter
+        if (auto* param = audioProcessor.apvts.getRawParameterValue("SelectedPresetId")) {
+            int presetId = static_cast<int>(param->load());
+            isUpdatingPresetSelector = true;
+            presetSelector.setSelectedId(presetId, juce::dontSendNotification);
+            // Update lastLoadedUserPreset if it's a user preset
+            if (presetId > 1000) {
+                auto it = presetIdToFile.find(presetId);
+                if (it != presetIdToFile.end())
+                    lastLoadedUserPreset = it->second;
+            } else {
+                lastLoadedUserPreset = juce::File();
+            }
+            isUpdatingPresetSelector = false;
+        }
+    };
     addAndMakeVisible(undoButton);
 
     redoButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2A2A35));
     redoButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFCCCCCC));
-    redoButton.onClick = [this]() { audioProcessor.undoManager.redo(); };
+    redoButton.onClick = [this]() { 
+        audioProcessor.undoManager.redo();
+        // Restore preset selector from the SelectedPresetId parameter
+        if (auto* param = audioProcessor.apvts.getRawParameterValue("SelectedPresetId")) {
+            int presetId = static_cast<int>(param->load());
+            isUpdatingPresetSelector = true;
+            presetSelector.setSelectedId(presetId, juce::dontSendNotification);
+            // Update lastLoadedUserPreset if it's a user preset
+            if (presetId > 1000) {
+                auto it = presetIdToFile.find(presetId);
+                if (it != presetIdToFile.end())
+                    lastLoadedUserPreset = it->second;
+            } else {
+                lastLoadedUserPreset = juce::File();
+            }
+            isUpdatingPresetSelector = false;
+        }
+    };
     addAndMakeVisible(redoButton);
 
-    audioProcessor.apvts.addParameterListener("PresetIndex", this);
+    audioProcessor.apvts.addParameterListener("SelectedPresetId", this);
 
-    constrainer.setMinimumSize(700, 580);
-    constrainer.setMaximumSize(1400, 1160);
-    constrainer.setFixedAspectRatio(700.0 / 580.0);
     setConstrainer(&constrainer);
+    constrainer.setFixedAspectRatio(750.0 / 600.0);
+    constrainer.setMinimumSize(750, 600);
+    constrainer.setMaximumSize(1500, 1200);
     setResizable(true, true);
-    setSize(840, 696);
-    
-    // Try to load last preset on startup
-    presetManager->loadLastPreset();
+    setSize(750, 600);
 }
 
 DX10AudioProcessorEditor::~DX10AudioProcessorEditor()
 {
     audioProcessor.setSpectrumAnalyzer(nullptr);
-    audioProcessor.apvts.removeParameterListener("PresetIndex", this);
+    audioProcessor.apvts.removeParameterListener("SelectedPresetId", this);
     setLookAndFeel(nullptr);
 }
 
@@ -178,8 +245,9 @@ void DX10AudioProcessorEditor::rebuildPresetList()
 {
     presetSelector.clear(juce::dontSendNotification);
     presetIdToFile.clear();
+    fileToPresetId.clear();
     
-    // Add factory presets
+    // Add factory presets (IDs 1-32)
     numFactoryPresets = audioProcessor.getNumPresets();
     for (int i = 0; i < numFactoryPresets; ++i)
         presetSelector.addItem(audioProcessor.getPresetName(i), i + 1);
@@ -191,7 +259,6 @@ void DX10AudioProcessorEditor::rebuildPresetList()
     {
         presetSelector.addSeparator();
         
-        int nextId = 1001;
         for (const auto& item : userPresets)
         {
             // Create indented name for folders
@@ -207,60 +274,105 @@ void DX10AudioProcessorEditor::rebuildPresetList()
             else
             {
                 displayName += item.displayName;
-                presetSelector.addItem(displayName, nextId);
-                presetIdToFile[nextId] = item.file;
-                nextId++;
+                // Generate unique ID from file path hash (1001 - 999999 range)
+                int presetId = generatePresetIdFromFile(item.file);
+                presetSelector.addItem(displayName, presetId);
+                presetIdToFile[presetId] = item.file;
+                fileToPresetId[item.file.getFullPathName()] = presetId;
             }
         }
     }
+}
+
+int DX10AudioProcessorEditor::generatePresetIdFromFile(const juce::File& file)
+{
+    // Generate a hash from the full file path
+    juce::String path = file.getFullPathName();
+    size_t hash = std::hash<std::string>{}(path.toStdString());
+    
+    // Map to range 1001 - 999999 (leaving room for factory presets 1-1000)
+    int baseId = 1001 + static_cast<int>(hash % 998999);
+    
+    // Handle collisions by incrementing
+    while (presetIdToFile.find(baseId) != presetIdToFile.end())
+        baseId++;
+    
+    return baseId;
 }
 
 void DX10AudioProcessorEditor::goToPreviousPreset()
 {
     int currentId = presetSelector.getSelectedId();
-    int totalItems = presetSelector.getNumItems();
     
-    int currentIndex = -1;
-    for (int i = 0; i < totalItems; ++i) {
-        if (presetSelector.getItemId(i) == currentId) {
-            currentIndex = i;
-            break;
-        }
+    // Build list of all valid preset IDs (factory: 1-32, user: 1001+)
+    std::vector<int> validIds;
+    
+    // Add factory preset IDs
+    for (int i = 0; i < numFactoryPresets; ++i)
+        validIds.push_back(i + 1);
+    
+    // Add user preset IDs from the map
+    for (const auto& pair : presetIdToFile)
+        validIds.push_back(pair.first);
+    
+    // Sort to ensure order
+    std::sort(validIds.begin(), validIds.end());
+    
+    if (validIds.empty()) return;
+    
+    // Find current position
+    auto it = std::find(validIds.begin(), validIds.end(), currentId);
+    
+    int newId;
+    if (it == validIds.end() || it == validIds.begin()) {
+        // Not found or at beginning - wrap to end
+        newId = validIds.back();
+    } else {
+        // Go to previous
+        newId = *(--it);
     }
     
-    if (currentIndex > 0) {
-        for (int i = currentIndex - 1; i >= 0; --i) {
-            int itemId = presetSelector.getItemId(i);
-            if (itemId > 0 && presetSelector.isItemEnabled(i)) {
-                presetSelector.setSelectedId(itemId);
-                break;
-            }
-        }
-    }
+    presetSelector.setSelectedId(newId);
 }
 
 void DX10AudioProcessorEditor::goToNextPreset()
 {
     int currentId = presetSelector.getSelectedId();
-    int totalItems = presetSelector.getNumItems();
     
-    int currentIndex = -1;
-    for (int i = 0; i < totalItems; ++i) {
-        if (presetSelector.getItemId(i) == currentId) {
-            currentIndex = i;
-            break;
+    // Build list of all valid preset IDs (factory: 1-32, user: 1001+)
+    std::vector<int> validIds;
+    
+    // Add factory preset IDs
+    for (int i = 0; i < numFactoryPresets; ++i)
+        validIds.push_back(i + 1);
+    
+    // Add user preset IDs from the map
+    for (const auto& pair : presetIdToFile)
+        validIds.push_back(pair.first);
+    
+    // Sort to ensure order
+    std::sort(validIds.begin(), validIds.end());
+    
+    if (validIds.empty()) return;
+    
+    // Find current position
+    auto it = std::find(validIds.begin(), validIds.end(), currentId);
+    
+    int newId;
+    if (it == validIds.end()) {
+        // Not found - go to first
+        newId = validIds.front();
+    } else {
+        ++it;
+        if (it == validIds.end()) {
+            // At end - wrap to beginning
+            newId = validIds.front();
+        } else {
+            newId = *it;
         }
     }
     
-    if (currentIndex >= 0 && currentIndex < totalItems - 1) {
-        for (int i = currentIndex + 1; i < totalItems; ++i) {
-            int itemId = presetSelector.getItemId(i);
-            if (itemId > 0 && presetSelector.isItemEnabled(i)) {
-                presetSelector.setSelectedId(itemId);
-                break;
-            }
-        }
-    }
+    presetSelector.setSelectedId(newId);
 }
 
 void DX10AudioProcessorEditor::savePresetToFile()
@@ -281,16 +393,26 @@ void DX10AudioProcessorEditor::savePresetToFile()
                     file = file.withFileExtension(PresetManager::getPresetExtension());
                 
                 if (presetManager->savePresetToFile(file)) {
+                    lastLoadedUserPreset = file;
+                    
+                    // Set the preset name for host display
+                    audioProcessor.setCurrentPresetName(file.getFileNameWithoutExtension());
+                    
                     rebuildPresetList();
-                    // Select the saved preset
-                    for (const auto& pair : presetIdToFile) {
-                        if (pair.second == file) {
-                            isUpdatingPresetSelector = true;
-                            presetSelector.setSelectedId(pair.first, juce::dontSendNotification);
-                            isUpdatingPresetSelector = false;
-                            break;
-                        }
+                    
+                    // Look up the preset ID using the file path
+                    auto it = fileToPresetId.find(file.getFullPathName());
+                    if (it != fileToPresetId.end()) {
+                        int presetId = it->second;
+                        isUpdatingPresetSelector = true;
+                        presetSelector.setSelectedId(presetId, juce::dontSendNotification);
+                        if (auto* param = audioProcessor.apvts.getParameter("SelectedPresetId"))
+                            param->setValueNotifyingHost(param->convertTo0to1(static_cast<float>(presetId)));
+                        isUpdatingPresetSelector = false;
                     }
+                    
+                    // Notify host of program change
+                    audioProcessor.updateHostDisplay(juce::AudioProcessor::ChangeDetails().withProgramChanged(true));
                 }
             }
         }
@@ -312,16 +434,26 @@ void DX10AudioProcessorEditor::loadPresetFromFile()
             auto file = fc.getResult();
             if (file.existsAsFile()) {
                 if (presetManager->loadPresetFromFile(file)) {
+                    lastLoadedUserPreset = file;
+                    
+                    // Set the preset name for host display
+                    audioProcessor.setCurrentPresetName(file.getFileNameWithoutExtension());
+                    
                     rebuildPresetList();
-                    // Select the loaded preset if it's in the list
-                    for (const auto& pair : presetIdToFile) {
-                        if (pair.second == file) {
-                            isUpdatingPresetSelector = true;
-                            presetSelector.setSelectedId(pair.first, juce::dontSendNotification);
-                            isUpdatingPresetSelector = false;
-                            break;
-                        }
+                    
+                    // Look up the preset ID using the file path
+                    auto it = fileToPresetId.find(file.getFullPathName());
+                    if (it != fileToPresetId.end()) {
+                        int presetId = it->second;
+                        isUpdatingPresetSelector = true;
+                        presetSelector.setSelectedId(presetId, juce::dontSendNotification);
+                        if (auto* param = audioProcessor.apvts.getParameter("SelectedPresetId"))
+                            param->setValueNotifyingHost(param->convertTo0to1(static_cast<float>(presetId)));
+                        isUpdatingPresetSelector = false;
                     }
+                    
+                    // Notify host of program change
+                    audioProcessor.updateHostDisplay(juce::AudioProcessor::ChangeDetails().withProgramChanged(true));
                 }
             }
         }
@@ -330,17 +462,27 @@ void DX10AudioProcessorEditor::loadPresetFromFile()
 
 void DX10AudioProcessorEditor::parameterChanged(const juce::String& parameterID, float)
 {
-    if (parameterID == "PresetIndex")
+    // Only update selector when SelectedPresetId changes, not PresetIndex
+    if (parameterID == "SelectedPresetId")
         juce::MessageManager::callAsync([this]() { updatePresetSelectorFromParameter(); });
 }
 
 void DX10AudioProcessorEditor::updatePresetSelectorFromParameter()
 {
     isUpdatingPresetSelector = true;
-    if (auto* param = audioProcessor.apvts.getRawParameterValue("PresetIndex")) {
-        int index = static_cast<int>(param->load() * (NPRESETS - 1) + 0.5f);
-        if (index >= 0 && index < numFactoryPresets)
-            presetSelector.setSelectedId(index + 1, juce::dontSendNotification);
+    if (auto* param = audioProcessor.apvts.getRawParameterValue("SelectedPresetId")) {
+        int presetId = static_cast<int>(param->load());
+        if (presetId > 0) {
+            presetSelector.setSelectedId(presetId, juce::dontSendNotification);
+            // Update lastLoadedUserPreset if it's a user preset
+            if (presetId > 1000) {
+                auto it = presetIdToFile.find(presetId);
+                if (it != presetIdToFile.end())
+                    lastLoadedUserPreset = it->second;
+            } else {
+                lastLoadedUserPreset = juce::File();
+            }
+        }
     }
     isUpdatingPresetSelector = false;
 }
@@ -381,7 +523,26 @@ void DX10AudioProcessorEditor::filesDropped(const juce::StringArray& files, int,
         juce::File file(filePath);
         if (file.hasFileExtension(PresetManager::getPresetExtension())) {
             if (presetManager->loadPresetFromFile(file)) {
+                lastLoadedUserPreset = file;
+                
+                // Set the preset name for host display
+                audioProcessor.setCurrentPresetName(file.getFileNameWithoutExtension());
+                
                 rebuildPresetList();
+                
+                // Look up the preset ID and update selector
+                auto it = fileToPresetId.find(file.getFullPathName());
+                if (it != fileToPresetId.end()) {
+                    int presetId = it->second;
+                    isUpdatingPresetSelector = true;
+                    presetSelector.setSelectedId(presetId, juce::dontSendNotification);
+                    if (auto* param = audioProcessor.apvts.getParameter("SelectedPresetId"))
+                        param->setValueNotifyingHost(param->convertTo0to1(static_cast<float>(presetId)));
+                    isUpdatingPresetSelector = false;
+                }
+                
+                // Notify host of program change
+                audioProcessor.updateHostDisplay(juce::AudioProcessor::ChangeDetails().withProgramChanged(true));
                 break;
             }
         }
@@ -452,16 +613,20 @@ void DX10AudioProcessorEditor::paint(juce::Graphics& g)
 
     auto contentBounds = bounds.reduced(margin, margin / 2);
     int sectionWidth = (contentBounds.getWidth() - sectionGap * 2) / 3;
-    int topRowHeight = int(140.0f * scale);
-    int spectrumHeight = int(80.0f * scale);
-    int bottomRowHeight = contentBounds.getHeight() - topRowHeight - spectrumHeight - sectionGap * 2;
+    int topRowHeight = int(130.0f * scale);
+    int midRowHeight = int(130.0f * scale);
+    int bottomRowHeight = int(130.0f * scale);
 
-    // Draw sections
+    // Draw sections - Row 1
     drawSection(g, {contentBounds.getX(), contentBounds.getY(), sectionWidth, topRowHeight}, "CARRIER ENVELOPE");
     drawSection(g, {contentBounds.getX() + sectionWidth + sectionGap, contentBounds.getY(), sectionWidth, topRowHeight}, "MODULATOR RATIO");
     drawSection(g, {contentBounds.getX() + (sectionWidth + sectionGap) * 2, contentBounds.getY(), sectionWidth, topRowHeight}, "TUNING");
-    drawSection(g, {contentBounds.getX(), contentBounds.getY() + topRowHeight + sectionGap, sectionWidth * 2 + sectionGap, bottomRowHeight}, "MODULATOR ENVELOPE");
-    drawSection(g, {contentBounds.getX() + (sectionWidth + sectionGap) * 2, contentBounds.getY() + topRowHeight + sectionGap, sectionWidth, bottomRowHeight}, "OUTPUT / LFO");
+    
+    // Row 2 - Modulator Envelope (full width)
+    drawSection(g, {contentBounds.getX(), contentBounds.getY() + topRowHeight + sectionGap, contentBounds.getWidth(), midRowHeight}, "MODULATOR ENVELOPE");
+    
+    // Row 3 - Output / LFO (full width)
+    drawSection(g, {contentBounds.getX(), contentBounds.getY() + topRowHeight + midRowHeight + sectionGap * 2, contentBounds.getWidth(), bottomRowHeight}, "OUTPUT / LFO");
 }
 
 void DX10AudioProcessorEditor::resized()
@@ -472,7 +637,7 @@ void DX10AudioProcessorEditor::resized()
     int margin = int(16.0f * scale);
     int headerHeight = int(70.0f * scale);
     int sectionGap = int(12.0f * scale);
-    int knobSize = int(80.0f * scale);
+    int knobSize = int(90.0f * scale);  // Bigger knobs
     int sectionPadding = int(35.0f * scale);
     int buttonHeight = int(24.0f * scale);
     int smallButtonWidth = int(26.0f * scale);
@@ -499,16 +664,22 @@ void DX10AudioProcessorEditor::resized()
     presetSelector.setBounds(prevPresetButton.getRight() + 2, headerY, presetSelectorWidth, buttonHeight);
     nextPresetButton.setBounds(presetSelector.getRight() + 2, headerY, smallButtonWidth, buttonHeight);
 
+    // Spectrum toggle button (bottom left, just above where spectrum would be)
+    int spectrumButtonWidth = int(70.0f * scale);
+    // Position will be set after contentBounds is calculated
+
     auto contentBounds = bounds.reduced(margin, margin / 2);
     int sectionWidth = (contentBounds.getWidth() - sectionGap * 2) / 3;
-    int topRowHeight = int(140.0f * scale);
-    int spectrumHeight = int(80.0f * scale);
-    int bottomRowHeight = contentBounds.getHeight() - topRowHeight - spectrumHeight - sectionGap * 2;
+    int topRowHeight = int(130.0f * scale);
+    int midRowHeight = int(130.0f * scale);
+    int bottomRowHeight = int(130.0f * scale);
+    int spectrumHeight = int(100.0f * scale);
 
     // Spectrum analyzer at bottom
-    spectrumAnalyzer.setBounds(contentBounds.getX(), contentBounds.getBottom() - spectrumHeight, contentBounds.getWidth(), spectrumHeight);
+    int spectrumY = contentBounds.getY() + topRowHeight + midRowHeight + bottomRowHeight + sectionGap * 3;
+    spectrumAnalyzer.setBounds(contentBounds.getX(), spectrumY, contentBounds.getWidth(), contentBounds.getBottom() - spectrumY);
 
-    // Carrier Envelope
+    // Row 1: Carrier Envelope
     auto carrierBounds = juce::Rectangle<int>(contentBounds.getX(), contentBounds.getY(), sectionWidth, topRowHeight);
     auto knobArea = carrierBounds.reduced(8, 0).withTrimmedTop(sectionPadding);
     int knobSpacing = knobArea.getWidth() / 3;
@@ -516,22 +687,22 @@ void DX10AudioProcessorEditor::resized()
     decayKnob.setBounds(knobArea.getX() + knobSpacing + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
     releaseKnob.setBounds(knobArea.getX() + knobSpacing*2 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
 
-    // Modulator Ratio
+    // Row 1: Modulator Ratio
     auto ratioBounds = juce::Rectangle<int>(contentBounds.getX() + sectionWidth + sectionGap, contentBounds.getY(), sectionWidth, topRowHeight);
     knobArea = ratioBounds.reduced(8, 0).withTrimmedTop(sectionPadding);
     knobSpacing = knobArea.getWidth() / 2;
     coarseKnob.setBounds(knobArea.getX() + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
     fineKnob.setBounds(knobArea.getX() + knobSpacing + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
 
-    // Tuning
+    // Row 1: Tuning
     auto tuningBounds = juce::Rectangle<int>(contentBounds.getX() + (sectionWidth + sectionGap)*2, contentBounds.getY(), sectionWidth, topRowHeight);
     knobArea = tuningBounds.reduced(8, 0).withTrimmedTop(sectionPadding);
     knobSpacing = knobArea.getWidth() / 2;
     octaveKnob.setBounds(knobArea.getX() + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
     fineTuneKnob.setBounds(knobArea.getX() + knobSpacing + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
 
-    // Modulator Envelope
-    auto modEnvBounds = juce::Rectangle<int>(contentBounds.getX(), contentBounds.getY() + topRowHeight + sectionGap, sectionWidth*2 + sectionGap, bottomRowHeight);
+    // Row 2: Modulator Envelope (full width, 5 knobs)
+    auto modEnvBounds = juce::Rectangle<int>(contentBounds.getX(), contentBounds.getY() + topRowHeight + sectionGap, contentBounds.getWidth(), midRowHeight);
     knobArea = modEnvBounds.reduced(8, 0).withTrimmedTop(sectionPadding);
     knobSpacing = knobArea.getWidth() / 5;
     modInitKnob.setBounds(knobArea.getX() + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
@@ -540,13 +711,14 @@ void DX10AudioProcessorEditor::resized()
     modRelKnob.setBounds(knobArea.getX() + knobSpacing*3 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
     modVelKnob.setBounds(knobArea.getX() + knobSpacing*4 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
 
-    // Output / LFO
-    auto outputBounds = juce::Rectangle<int>(contentBounds.getX() + (sectionWidth + sectionGap)*2, contentBounds.getY() + topRowHeight + sectionGap, sectionWidth, bottomRowHeight);
+    // Row 3: Output / LFO (full width, 6 knobs)
+    auto outputBounds = juce::Rectangle<int>(contentBounds.getX(), contentBounds.getY() + topRowHeight + midRowHeight + sectionGap * 2, contentBounds.getWidth(), bottomRowHeight);
     knobArea = outputBounds.reduced(8, 0).withTrimmedTop(sectionPadding);
-    knobSpacing = knobArea.getWidth() / 2;
-    int knobRowHeight = knobArea.getHeight() / 2;
-    vibratoKnob.setBounds(knobArea.getX() + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobRowHeight);
-    lfoRateKnob.setBounds(knobArea.getX() + knobSpacing + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobRowHeight);
-    waveformKnob.setBounds(knobArea.getX() + knobSpacing/2 - knobSize/2, knobArea.getY() + knobRowHeight, knobSize, knobRowHeight);
-    modThruKnob.setBounds(knobArea.getX() + knobSpacing + knobSpacing/2 - knobSize/2, knobArea.getY() + knobRowHeight, knobSize, knobRowHeight);
+    knobSpacing = knobArea.getWidth() / 6;
+    vibratoKnob.setBounds(knobArea.getX() + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
+    lfoRateKnob.setBounds(knobArea.getX() + knobSpacing + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
+    waveformKnob.setBounds(knobArea.getX() + knobSpacing*2 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
+    modThruKnob.setBounds(knobArea.getX() + knobSpacing*3 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
+    gainKnob.setBounds(knobArea.getX() + knobSpacing*4 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
+    saturationKnob.setBounds(knobArea.getX() + knobSpacing*5 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
 }

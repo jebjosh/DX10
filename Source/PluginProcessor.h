@@ -96,6 +96,10 @@ public:
     // Get preset name by index
     juce::String getPresetName(int index) const;
     
+    // Set the current preset name (for user presets)
+    void setCurrentPresetName(const juce::String& name) { _currentPresetName = name; }
+    juce::String getCurrentPresetName() const { return _currentPresetName; }
+    
     // Spectrum analyzer data access
     void setSpectrumAnalyzer(SpectrumAnalyzer* analyzer) { spectrumAnalyzer = analyzer; }
 
@@ -114,6 +118,9 @@ private:
 
     // Index of the active preset (kept in sync with PresetIndex parameter)
     int _currentProgram;
+    
+    // Current preset name (for display, especially for user presets)
+    juce::String _currentPresetName;
 
     // The current sample rate and 1 / sample rate.
     float _sampleRate, _inverseSampleRate;
@@ -196,6 +203,13 @@ private:
 
     // Pitch bend value.
     float _pitchBend;
+    
+    // Output section parameters
+    float _outputGain = 1.0f;  // 0dB default
+    float _saturation = 0.0f;
+    
+    // Flag to prevent setCurrentProgram from overwriting restored state
+    bool _isRestoringState = false;
     
     // Pointer to spectrum analyzer (set by editor)
     SpectrumAnalyzer* spectrumAnalyzer = nullptr;

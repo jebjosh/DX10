@@ -8,6 +8,8 @@
 #include "PresetManager.h"
 #include <vector>
 #include <map>
+#include <algorithm>
+#include <functional>
 
 class DX10AudioProcessorEditor : public juce::AudioProcessorEditor,
                                   private juce::AudioProcessorValueTreeState::Listener,
@@ -56,6 +58,7 @@ private:
     RotaryKnobWithLabel modInitKnob, modDecKnob, modSusKnob, modRelKnob, modVelKnob;
     RotaryKnobWithLabel octaveKnob, fineTuneKnob;
     RotaryKnobWithLabel vibratoKnob, waveformKnob, modThruKnob, lfoRateKnob;
+    RotaryKnobWithLabel gainKnob, saturationKnob;
 
     // Attachments
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -64,6 +67,7 @@ private:
     std::unique_ptr<SliderAttachment> modInitAttachment, modDecAttachment, modSusAttachment, modRelAttachment, modVelAttachment;
     std::unique_ptr<SliderAttachment> octaveAttachment, fineTuneAttachment;
     std::unique_ptr<SliderAttachment> vibratoAttachment, waveformAttachment, modThruAttachment, lfoRateAttachment;
+    std::unique_ptr<SliderAttachment> gainAttachment, saturationAttachment;
 
     void setupKnob(RotaryKnobWithLabel& knob, const juce::String& labelText);
     void drawSection(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::String& title);
@@ -75,6 +79,7 @@ private:
     void rebuildPresetList();
     void showSettingsMenu();
     void selectPresetFolder();
+    int generatePresetIdFromFile(const juce::File& file);
 
     juce::ComponentBoundsConstrainer constrainer;
 
@@ -82,8 +87,14 @@ private:
     int numFactoryPresets = 0;
     std::vector<FlatPresetItem> userPresets;
     
-    // Map combo box IDs to preset files
+    // Map combo box IDs to preset files (ID -> File)
     std::map<int, juce::File> presetIdToFile;
+    
+    // Map file paths to preset IDs (Path -> ID) for reverse lookup
+    std::map<juce::String, int> fileToPresetId;
+    
+    // Track the last loaded user preset for undo/display purposes
+    juce::File lastLoadedUserPreset;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DX10AudioProcessorEditor)
 };

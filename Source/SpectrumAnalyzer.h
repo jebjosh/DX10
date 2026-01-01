@@ -135,7 +135,7 @@ private:
         auto width = bounds.getWidth();
         auto height = bounds.getHeight();
         
-        // Create gradient for spectrum bars
+        // Create gradient for spectrum fill
         juce::ColourGradient gradient(
             juce::Colour(0xFF00D4AA).withAlpha(0.8f),
             bounds.getX(), bounds.getBottom(),
