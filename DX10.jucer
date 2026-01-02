@@ -3,7 +3,8 @@
 <JUCERPROJECT id="XXZEaG" name="DX10" projectType="audioplug" useAppConfig="0"
               addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1" companyName="jebjosh"
               pluginCharacteristicsValue="pluginIsSynth,pluginProducesMidiOut,pluginWantsMidiIn"
-              pluginAUMainType="'augn'" pluginCode="JEBX">
+              pluginAUMainType="'augn'" pluginCode="DX10" pluginManufacturerCode="JEBJ"
+              version="2.0.0">
   <MAINGROUP id="EOAZWx" name="DX10">
     <GROUP id="{57CF558F-1AAE-0E37-0510-A56F3BE2BB10}" name="Source">
       <FILE id="HRjkT3" name="CustomLookAndFeel.h" compile="0" resource="0"
