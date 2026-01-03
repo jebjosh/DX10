@@ -87,5 +87,5 @@ private:
     HostContextSlider slider;
     juce::Label label;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RotaryKnobWithLabel)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RotaryKnobWithLabel);
 };

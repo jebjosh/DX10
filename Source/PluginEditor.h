@@ -58,7 +58,7 @@ private:
     RotaryKnobWithLabel modInitKnob, modDecKnob, modSusKnob, modRelKnob, modVelKnob;
     RotaryKnobWithLabel octaveKnob, fineTuneKnob;
     RotaryKnobWithLabel vibratoKnob, waveformKnob, modThruKnob, lfoRateKnob;
-    RotaryKnobWithLabel gainKnob, saturationKnob;
+    RotaryKnobWithLabel gainKnob, saturationKnob, glideKnob;
 
     // Attachments
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -67,7 +67,7 @@ private:
     std::unique_ptr<SliderAttachment> modInitAttachment, modDecAttachment, modSusAttachment, modRelAttachment, modVelAttachment;
     std::unique_ptr<SliderAttachment> octaveAttachment, fineTuneAttachment;
     std::unique_ptr<SliderAttachment> vibratoAttachment, waveformAttachment, modThruAttachment, lfoRateAttachment;
-    std::unique_ptr<SliderAttachment> gainAttachment, saturationAttachment;
+    std::unique_ptr<SliderAttachment> gainAttachment, saturationAttachment, glideAttachment;
 
     void setupKnob(RotaryKnobWithLabel& knob, const juce::String& labelText);
     void drawSection(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::String& title);
@@ -96,5 +96,5 @@ private:
     // Track the last loaded user preset for undo/display purposes
     juce::File lastLoadedUserPreset;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DX10AudioProcessorEditor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DX10AudioProcessorEditor);
 };

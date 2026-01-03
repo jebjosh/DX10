@@ -30,6 +30,10 @@ struct Voice
     // Carrier oscillator
     float car;   // current phase value
     float dcar;  // phase increment
+    
+    // Target phase increment for glide
+    float dcarTarget;  // target phase increment (for portamento/glide)
+    float dcarGlide;   // glide rate (0 = instant, closer to 1 = slower glide)
 
     // Modulator sine oscillator
     float dmod;  // phase increment
@@ -204,6 +208,13 @@ private:
     // Pitch bend value.
     float _pitchBend;
     
+    // Portamento/Glide settings (controlled by UI knob + can be overridden by MIDI CC)
+    float _glideTime = 0.0f;         // From UI parameter (0-1)
+    float _portamentoTimeCC = -1.0f; // CC #5 override (-1 = use UI knob)
+    bool _portamentoOnCC = false;    // CC #65 override
+    float _portamentoRate = 1.0f;    // Calculated glide rate per sample
+    int _lastNote = -1;              // Last played note for portamento
+    
     // Output section parameters
     float _outputGain = 1.0f;  // 0dB default
     float _saturation = 0.0f;
@@ -214,5 +225,5 @@ private:
     // Pointer to spectrum analyzer (set by editor)
     SpectrumAnalyzer* spectrumAnalyzer = nullptr;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DX10AudioProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DX10AudioProcessor);
 };

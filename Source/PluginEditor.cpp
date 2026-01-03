@@ -20,7 +20,7 @@ DX10AudioProcessorEditor::DX10AudioProcessorEditor(DX10AudioProcessor& p)
     setupKnob(octaveKnob, "OCTAVE"); setupKnob(fineTuneKnob, "FINE TUNE");
     setupKnob(vibratoKnob, "VIBRATO"); setupKnob(waveformKnob, "WAVEFORM");
     setupKnob(modThruKnob, "MOD THRU"); setupKnob(lfoRateKnob, "LFO RATE");
-    setupKnob(gainKnob, "GAIN"); setupKnob(saturationKnob, "SATURATE");
+    setupKnob(glideKnob, "GLIDE"); setupKnob(gainKnob, "GAIN"); setupKnob(saturationKnob, "SATURATE");
 
     // Create attachments
     attackAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "Attack", attackKnob.getSlider());
@@ -41,6 +41,7 @@ DX10AudioProcessorEditor::DX10AudioProcessorEditor(DX10AudioProcessor& p)
     lfoRateAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "LFO Rate", lfoRateKnob.getSlider());
     gainAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "Gain", gainKnob.getSlider());
     saturationAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "Saturation", saturationKnob.getSlider());
+    glideAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "Glide", glideKnob.getSlider());
 
     // Set associated parameters for host context menu (DAW automation)
     attackKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Attack"));
@@ -61,6 +62,7 @@ DX10AudioProcessorEditor::DX10AudioProcessorEditor(DX10AudioProcessor& p)
     lfoRateKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("LFO Rate"));
     gainKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Gain"));
     saturationKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Saturation"));
+    glideKnob.getSlider().setAssociatedParameter(audioProcessor.apvts.getParameter("Glide"));
 
     // Build preset list
     rebuildPresetList();
@@ -711,14 +713,15 @@ void DX10AudioProcessorEditor::resized()
     modRelKnob.setBounds(knobArea.getX() + knobSpacing*3 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
     modVelKnob.setBounds(knobArea.getX() + knobSpacing*4 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
 
-    // Row 3: Output / LFO (full width, 6 knobs)
+    // Row 3: Output / LFO (full width, 7 knobs)
     auto outputBounds = juce::Rectangle<int>(contentBounds.getX(), contentBounds.getY() + topRowHeight + midRowHeight + sectionGap * 2, contentBounds.getWidth(), bottomRowHeight);
     knobArea = outputBounds.reduced(8, 0).withTrimmedTop(sectionPadding);
-    knobSpacing = knobArea.getWidth() / 6;
+    knobSpacing = knobArea.getWidth() / 7;
     vibratoKnob.setBounds(knobArea.getX() + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
     lfoRateKnob.setBounds(knobArea.getX() + knobSpacing + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
     waveformKnob.setBounds(knobArea.getX() + knobSpacing*2 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
     modThruKnob.setBounds(knobArea.getX() + knobSpacing*3 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
-    gainKnob.setBounds(knobArea.getX() + knobSpacing*4 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
-    saturationKnob.setBounds(knobArea.getX() + knobSpacing*5 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
+    glideKnob.setBounds(knobArea.getX() + knobSpacing*4 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
+    gainKnob.setBounds(knobArea.getX() + knobSpacing*5 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
+    saturationKnob.setBounds(knobArea.getX() + knobSpacing*6 + knobSpacing/2 - knobSize/2, knobArea.getY(), knobSize, knobArea.getHeight());
 }

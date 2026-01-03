@@ -203,5 +203,5 @@ private:
     int fifoIndex = 0;
     bool nextFFTBlockReady = false;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumAnalyzer)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumAnalyzer);
 };

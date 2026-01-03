@@ -135,8 +135,32 @@ void DX10AudioProcessor::createPrograms()
 
 void DX10AudioProcessor::resetState()
 {
-    for (int v = 0; v < NVOICES; ++v) { _voices[v].env = 0.0f; _voices[v].car = 0.0f; _voices[v].dcar = 0.0f; _voices[v].mod0 = 0.0f; _voices[v].mod1 = 0.0f; _voices[v].dmod = 0.0f; _voices[v].cdec = 0.99f; }
-    _numActiveVoices = 0; _notes[0] = EVENTS_DONE; _modWheel = 0.0f; _pitchBend = 1.0f; _volume = 0.0035f; _sustain = 0; _lfoStep = 0; _lfo0 = 0.0f; _lfo1 = 1.0f; _modulationAmount = 0.0f;
+    for (int v = 0; v < NVOICES; ++v) { 
+        _voices[v].env = 0.0f; 
+        _voices[v].car = 0.0f; 
+        _voices[v].dcar = 0.0f; 
+        _voices[v].dcarTarget = 0.0f;
+        _voices[v].dcarGlide = 1.0f;
+        _voices[v].mod0 = 0.0f; 
+        _voices[v].mod1 = 0.0f; 
+        _voices[v].dmod = 0.0f; 
+        _voices[v].cdec = 0.99f; 
+    }
+    _numActiveVoices = 0; 
+    _notes[0] = EVENTS_DONE; 
+    _modWheel = 0.0f; 
+    _pitchBend = 1.0f; 
+    _volume = 0.0035f; 
+    _sustain = 0; 
+    _lfoStep = 0; 
+    _lfo0 = 0.0f; 
+    _lfo1 = 1.0f; 
+    _modulationAmount = 0.0f;
+    _lastNote = -1;
+    _glideTime = 0.0f;
+    _portamentoTimeCC = -1.0f;
+    _portamentoOnCC = false;
+    _portamentoRate = 1.0f;
 }
 
 void DX10AudioProcessor::update()
@@ -179,6 +203,21 @@ void DX10AudioProcessor::update()
     float gainParam = apvts.getRawParameterValue("Gain")->load();
     _outputGain = std::pow(10.0f, (gainParam * 24.0f - 12.0f) / 20.0f);  // -12dB to +12dB
     _saturation = apvts.getRawParameterValue("Saturation")->load();
+    
+    // Glide/Portamento - use CC override if set, otherwise use UI knob
+    float glideParam = (_portamentoTimeCC >= 0.0f) ? _portamentoTimeCC : apvts.getRawParameterValue("Glide")->load();
+    _glideTime = glideParam;
+    if (glideParam < 0.01f) {
+        _portamentoRate = 1.0f;  // Instant (no glide)
+    } else {
+        // Calculate glide rate: how much to move toward target per sample
+        // glideParam 0-1 maps to approximately 5ms to 2000ms glide time
+        float glideSeconds = 0.005f + glideParam * glideParam * 2.0f;
+        // Rate is fraction of distance to cover per sample
+        // After N samples, we want to be ~95% there, so rate = 1 - e^(-3/N)
+        float samplesForGlide = glideSeconds * _sampleRate;
+        _portamentoRate = 1.0f - std::exp(-3.0f / samplesForGlide);
+    }
 }
 
 void DX10AudioProcessor::processEvents(juce::MidiBuffer &midiMessages)
@@ -188,19 +227,56 @@ void DX10AudioProcessor::processEvents(juce::MidiBuffer &midiMessages)
         if (metadata.numBytes != 3) continue;
         const auto data0 = metadata.data[0]; const auto data1 = metadata.data[1]; const auto data2 = metadata.data[2];
         const int deltaFrames = metadata.samplePosition;
-        switch (data0 & 0xf0) {
-            case 0x80: _notes[npos++] = deltaFrames; _notes[npos++] = data1 & 0x7F; _notes[npos++] = 0; break;
-            case 0x90: _notes[npos++] = deltaFrames; _notes[npos++] = data1 & 0x7F; _notes[npos++] = data2 & 0x7F; break;
-            case 0xB0:
+        const int status = data0 & 0xF0;
+        
+        switch (status) {
+            case 0x80: // Note Off
+                _notes[npos++] = deltaFrames; 
+                _notes[npos++] = data1 & 0x7F; 
+                _notes[npos++] = 0; 
+                break;
+                
+            case 0x90: // Note On
+                _notes[npos++] = deltaFrames; 
+                _notes[npos++] = data1 & 0x7F; 
+                _notes[npos++] = data2 & 0x7F;
+                break;
+                
+            case 0xB0: // Control Change
                 switch (data1) {
                     case 0x01: _modWheel = 0.00000005f * float(data2 * data2); break;
+                    case 0x05: // CC #5 - Portamento Time (overrides knob if received)
+                        _portamentoTimeCC = float(data2) / 127.0f;
+                        break;
                     case 0x07: _volume = 0.00000035f * float(data2 * data2); break;
-                    case 0x40: _sustain = data2 & 0x40; if (_sustain == 0) { _notes[npos++] = deltaFrames; _notes[npos++] = SUSTAIN; _notes[npos++] = 0; } break;
-                    default: if (data1 > 0x7A) { for (int v = 0; v < NVOICES; ++v) _voices[v].cdec = 0.99f; _sustain = 0; } break;
+                    case 0x40: _sustain = data2 & 0x40; 
+                        if (_sustain == 0) { 
+                            _notes[npos++] = deltaFrames; 
+                            _notes[npos++] = SUSTAIN; 
+                            _notes[npos++] = 0; 
+                        } 
+                        break;
+                    case 0x41: // CC #65 - Portamento On/Off (overrides knob if received)
+                        _portamentoOnCC = (data2 >= 64);
+                        break;
+                    default: 
+                        if (data1 > 0x7A) { 
+                            for (int v = 0; v < NVOICES; ++v) _voices[v].cdec = 0.99f; 
+                            _sustain = 0; 
+                        } 
+                        break;
                 }
                 break;
-            case 0xC0: if (data1 < _programs.size()) setCurrentProgram(data1); break;
-            case 0xE0: _pitchBend = float(data1 + 128 * data2 - 8192); _pitchBend = (_pitchBend > 0.0f) ? 1.0f + 0.000014951f * _pitchBend : 1.0f + 0.000013318f * _pitchBend; break;
+                
+            case 0xC0: // Program Change
+                if (data1 < _programs.size()) setCurrentProgram(data1); 
+                break;
+                
+            case 0xE0: // Pitch Bend
+                _pitchBend = float(data1 + 128 * data2 - 8192); 
+                _pitchBend = (_pitchBend > 0.0f) ? 1.0f + 0.000014951f * _pitchBend : 1.0f + 0.000013318f * _pitchBend; 
+                break;
+                
             default: break;
         }
         if (npos > EVENTBUFFER) npos -= 3;
@@ -238,11 +314,26 @@ void DX10AudioProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::Mi
                 for (int v = 0; v < NVOICES; ++v) {
                     float e = V->env;
                     if (e > SILENCE) {
+                        // Apply pitch glide/portamento
+                        if (V->dcarGlide < 1.0f && std::abs(V->dcar - V->dcarTarget) > 0.00001f) {
+                            V->dcar += V->dcarGlide * (V->dcarTarget - V->dcar);
+                        } else {
+                            V->dcar = V->dcarTarget;
+                        }
+                        
+                        // Calculate current pitch with pitch bend applied
+                        float currentPitch = V->dcar * _pitchBend;
+                        
                         V->env = e * V->cdec;
                         V->cenv += V->catt * (e - V->cenv);
+                        
+                        // Update modulator with current pitch (including pitch bend)
+                        float modPitch = _ratio * currentPitch;
+                        V->dmod = 2.0f * std::cos(modPitch);
                         float y = V->dmod * V->mod0 - V->mod1; V->mod1 = V->mod0; V->mod0 = y;
+                        
                         V->menv += V->mdec * (V->mlev - V->menv);
-                        float x = V->car + V->dcar + y * V->menv + _modulationAmount;
+                        float x = V->car + currentPitch + y * V->menv + _modulationAmount;
                         while (x > 1.0f) x -= 2.0f; while (x < -1.0f) x += 2.0f;
                         V->car = x;
                         float s = x + x * x * x * (_richness * x * x - 1.0f - _richness);
@@ -284,10 +375,32 @@ void DX10AudioProcessor::noteOn(int note, int velocity)
     if (velocity > 0) {
         float l = 1.0f; int vl = 0;
         for (int v = 0; v < NVOICES; v++) { if (_voices[v].env < l) { l = _voices[v].env; vl = v; } }
+        
+        // Calculate base pitch (without pitch bend - bend is applied in processBlock)
         float p = std::exp(0.05776226505f * (float(note) + _fineTune));
+        float targetDcar = _tune * p;
+        
         _voices[vl].note = note;
-        _voices[vl].car = 0.0f;
-        _voices[vl].dcar = _tune * _pitchBend * p;
+        
+        // Check if glide should be applied (either via knob or CC)
+        bool useGlide = (_glideTime > 0.01f) || _portamentoOnCC;
+        if (useGlide && _lastNote >= 0 && _lastNote != note) {
+            // Start from last note pitch, glide to new pitch
+            float lastP = std::exp(0.05776226505f * (float(_lastNote) + _fineTune));
+            _voices[vl].dcar = _tune * lastP;
+            _voices[vl].dcarTarget = targetDcar;
+            _voices[vl].dcarGlide = _portamentoRate;
+            // Don't reset carrier phase for smooth glide
+        } else {
+            // No glide - instant pitch
+            _voices[vl].dcar = targetDcar;
+            _voices[vl].dcarTarget = targetDcar;
+            _voices[vl].dcarGlide = 1.0f;
+            _voices[vl].car = 0.0f;  // Reset phase only for non-glide notes
+        }
+        
+        _lastNote = note;  // Remember this note for next glide
+        
         if (p > 50.0f) p = 50.0f;
         p *= (64.0f + _velocitySensitivity * (velocity - 64));
         _voices[vl].menv = _modInitialLevel * p;
@@ -350,6 +463,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout DX10AudioProcessor::createPa
     layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("LFO Rate", 1), "LFO Rate", juce::NormalisableRange<float>(0.0f, 1.0f), 0.414f, juce::AudioParameterFloatAttributes().withLabel("Hz").withStringFromValueFunction([](float v, int) { return juce::String(25.0f * v * v, 2); })));
     layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("Gain", 1), "Gain", juce::NormalisableRange<float>(0.0f, 1.0f), 0.5f, juce::AudioParameterFloatAttributes().withLabel("dB").withStringFromValueFunction([](float v, int) { return juce::String(v * 24.0f - 12.0f, 1); })));
     layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("Saturation", 1), "Saturation", juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f, juce::AudioParameterFloatAttributes().withLabel("%").withStringFromValueFunction([](float v, int) { return juce::String(int(v * 100.0f)); })));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID("Glide", 1), "Glide", juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f, juce::AudioParameterFloatAttributes().withLabel("ms").withStringFromValueFunction([](float v, int) { 
+        if (v < 0.01f) return juce::String("Off");
+        return juce::String(int(v * v * 2000.0f));  // 0-2000ms range, exponential
+    })));
     // Hidden parameter to track selected preset ID for undo (1-32 = factory, 1001+ = user)
     // Default to 16 = Log Drum preset
     layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID("SelectedPresetId", 1), "SelectedPresetId", 1, 999999, 16));
